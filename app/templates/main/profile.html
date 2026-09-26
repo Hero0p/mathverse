@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Profile — MathVerse{% endblock %}
+{% block content %}
+<div class="max-w-3xl mx-auto px-4 py-8">
+  <h1 class="text-2xl font-bold mb-1">{{ user.display_name }}</h1>
+  <p class="text-slate-400 mb-6">{{ user.tier or 'Unranked' }} {% if user.elo %}· {{ user.elo }} Elo{% endif %}</p>
+
+  <div id="stats" class="grid sm:grid-cols-4 gap-4 mb-8 text-center text-sm"></div>
+
+  <canvas id="elo-chart" height="120" class="mb-8"></canvas>
+
+  <div id="match-history" class="space-y-2"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+(async () => {
+  const res = await fetch('/api/arena/profile');
+  const { data } = await res.json();
+  const statsEl = document.getElementById('stats');
+  const items = [
+    ['Matches', data.match_count],
+    ['Win rate', data.accuracy !== null ? `${Math.round(data.accuracy*100)}%` : '—'],
+    ['Avg answer', `${Math.round(data.avg_answer_ms)}ms`],
+    ['Peak Elo', data.user.peak_elo || '—'],
+  ];
+  items.forEach(([label, value]) => {
+    const div = document.createElement('div');
+    div.className = 'card p-4';
+    div.innerHTML = `<div class="text-xl font-bold">${value}</div><div class="text-slate-400 text-xs">${label}</div>`;
+    statsEl.appendChild(div);
+  });
+
+  if (data.elo_history.length) {
+    new Chart(document.getElementById('elo-chart'), {
+      type: 'line',
+      data: {
+        labels: data.elo_history.map((_, i) => i + 1),
+        datasets: [{ label: 'Elo', data: data.elo_history.map(h => h.elo_after), borderColor: '#7c5cff', tension: 0.2 }],
+      },
+      options: { scales: { y: { beginAtZero: false } }, plugins: { legend: { display: false } } },
+    });
+  }
+
+  const historyEl = document.getElementById('match-history');
+  data.elo_history.slice().reverse().forEach(h => {
+    const div = document.createElement('div');
+    div.className = 'card p-3 flex justify-between text-sm';
+    const delta = h.elo_after - h.elo_before;
+    div.innerHTML = `<a href="/api/arena/match/${h.match_id}" class="hover:text-accent2">Match #${h.match_id}</a>
+      <span class="${delta >= 0 ? 'text-good' : 'text-bad'}">${delta >= 0 ? '+' : ''}${delta}</span>`;
+    historyEl.appendChild(div);
+  });
+})();
+</script>
+{% endblock %}

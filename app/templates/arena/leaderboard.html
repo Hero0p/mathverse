@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Leaderboard — MathVerse{% endblock %}
+{% block content %}
+<div class="max-w-3xl mx-auto px-4 py-8">
+  <h1 class="text-2xl font-bold mb-6">Leaderboard</h1>
+  <div class="flex gap-3 mb-4 text-sm">
+    <select id="tier-filter" class="bg-panel2 border border-white/10 rounded px-2 py-1">
+      <option value="">All tiers</option>
+      <option>Rookie</option><option>Genius</option><option>Phantom</option><option>Titan</option><option>Omniscient</option>
+    </select>
+    <select id="window-filter" class="bg-panel2 border border-white/10 rounded px-2 py-1">
+      <option value="all">All-time</option>
+      <option value="30d">Last 30 days</option>
+    </select>
+  </div>
+  <div id="rows" class="space-y-1"></div>
+  <div class="flex justify-center gap-2 mt-4">
+    <button id="prev-page" class="btn-secondary text-sm">Prev</button>
+    <span id="page-label" class="text-sm text-slate-400 self-center"></span>
+    <button id="next-page" class="btn-secondary text-sm">Next</button>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let page = 1;
+async function load() {
+  const tier = document.getElementById('tier-filter').value;
+  const window_ = document.getElementById('window-filter').value;
+  const params = new URLSearchParams({ window: window_, page });
+  if (tier) params.set('tier', tier);
+  const res = await fetch(`/api/arena/leaderboard?${params}`);
+  const { data } = await res.json();
+  const rowsEl = document.getElementById('rows');
+  rowsEl.innerHTML = '';
+  data.rows.forEach(r => {
+    const div = document.createElement('div');
+    div.className = 'card p-3 flex items-center justify-between text-sm';
+    div.innerHTML = `<span>#${r.rank} ${r.display_name} ${r.is_infinite ? '<span class="text-accent2">♾ Infinite</span>' : ''}</span>
+      <span class="text-slate-400">${r.tier} · ${r.elo} Elo</span>`;
+    rowsEl.appendChild(div);
+  });
+  document.getElementById('page-label').textContent = `Page ${data.page} of ${Math.max(1, Math.ceil(data.total / data.page_size))}`;
+}
+document.getElementById('tier-filter').addEventListener('change', () => { page = 1; load(); });
+document.getElementById('window-filter').addEventListener('change', () => { page = 1; load(); });
+document.getElementById('prev-page').addEventListener('click', () => { if (page > 1) { page--; load(); } });
+document.getElementById('next-page').addEventListener('click', () => { page++; load(); });
+load();
+</script>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Whiteboards — MathVerse{% endblock %}
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 py-8">
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold">Your whiteboards</h1>
+    <button id="new-board-btn" class="btn-primary">+ New board</button>
+  </div>
+  <div class="grid sm:grid-cols-3 gap-4">
+    {% for b in boards %}
+    <a href="{{ url_for('whiteboard.whiteboard_editor', board_id=b.id) }}" class="card p-4 hover:border-accent/50">
+      <div class="aspect-video bg-panel2 rounded mb-2 flex items-center justify-center text-slate-500 text-xs">
+        {% if b.thumbnail_path %}<img src="{{ b.to_dict().thumbnail_url }}" class="w-full h-full object-cover rounded">{% else %}No preview{% endif %}
+      </div>
+      <div class="font-medium truncate">{{ b.title }}</div>
+      <div class="text-xs text-slate-500">Updated {{ b.updated_at.strftime('%b %d, %Y') }}</div>
+    </a>
+    {% else %}
+    <p class="text-sm text-slate-500">No boards yet — create one to get started.</p>
+    {% endfor %}
+  </div>
+</div>
+<script>
+document.getElementById('new-board-btn').addEventListener('click', async () => {
+  const res = await fetch('/api/boards', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({}) });
+  const { data } = await res.json();
+  location.href = `/whiteboard/${data.id}`;
+});
+</script>
+{% endblock %}

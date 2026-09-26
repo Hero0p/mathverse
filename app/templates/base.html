@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>{% block title %}MathVerse{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: { extend: { colors: {
+        bg: '#0a0d16', panel: '#121826', panel2: '#1a2333',
+        accent: '#7c5cff', accent2: '#22d3ee', good: '#22c55e', bad: '#ef4444'
+      } } }
+    }
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body class="bg-bg text-slate-100 min-h-screen">
+
+{% if current_user.is_authenticated %}
+  {% set path = request.path %}
+
+  <!-- brand: top-left, deliberately quiet so the centre pill stays the focus -->
+  <a href="{{ url_for('main.dashboard') }}"
+     class="fixed top-6 left-6 z-50 font-bold tracking-tight text-accent hover:opacity-80 transition">
+    MathVerse
+  </a>
+
+  <!-- the translucent centre navbar: exactly three destinations -->
+  <div class="fixed top-4 inset-x-0 z-50 flex justify-center pointer-events-none px-4">
+    <nav class="pointer-events-auto flex items-center gap-1 rounded-full
+                border border-white/10 bg-panel/60 backdrop-blur-2xl
+                px-1.5 py-1.5 shadow-[0_8px_40px_rgba(0,0,0,0.55)]">
+      {% set tabs = [
+        ('Ask',      url_for('chat.chat_page'),            '/chat'),
+        ('Note',     url_for('whiteboard.whiteboard_page'),'/whiteboard'),
+        ('Practice', url_for('arena.arena_page'),          '/arena')
+      ] %}
+      {% for label, href, prefix in tabs %}
+        {% set active = path.startswith(prefix) %}
+        <a href="{{ href }}"
+           class="px-5 py-2 rounded-full text-sm font-medium transition
+                  {{ 'bg-accent text-white shadow-lg shadow-accent/25'
+                     if active else 'text-slate-400 hover:text-white hover:bg-white/5' }}">
+          {{ label }}
+        </a>
+      {% endfor %}
+    </nav>
+  </div>
+
+  <!-- account cluster: top-right, out of the way of the three main tabs -->
+  <div class="fixed top-5 right-6 z-50">
+    <button id="user-menu-btn"
+            class="flex items-center gap-2 rounded-full border border-white/10
+                   bg-panel/60 backdrop-blur-2xl pl-3 pr-2 py-1.5 text-sm
+                   text-slate-300 hover:text-white transition">
+      <span class="hidden sm:inline">{{ current_user.display_name }}</span>
+      <span class="w-6 h-6 rounded-full bg-accent/30 grid place-items-center text-xs font-bold">
+        {{ current_user.display_name[0]|upper }}
+      </span>
+    </button>
+    <div id="user-menu"
+         class="hidden absolute right-0 mt-2 w-44 rounded-xl border border-white/10
+                bg-panel/95 backdrop-blur-2xl p-1.5 shadow-2xl text-sm">
+      <a href="{{ url_for('arena.leaderboard_page') }}"
+         class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-white/5 hover:text-white">Leaderboard</a>
+      <a href="{{ url_for('main.profile') }}"
+         class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-white/5 hover:text-white">Profile</a>
+      <form method="post" action="{{ url_for('auth.logout') }}" class="mt-1 pt-1 border-t border-white/10">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="w-full text-left px-3 py-2 rounded-lg text-slate-400 hover:bg-white/5 hover:text-white">
+          Log out
+        </button>
+      </form>
+    </div>
+  </div>
+{% endif %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="fixed top-20 inset-x-0 z-40 flex flex-col items-center gap-2 px-4 pointer-events-none">
+    {% for category, message in messages %}
+    <div class="pointer-events-auto text-sm px-4 py-2 rounded-full backdrop-blur-xl border
+                {{ 'bg-red-500/20 border-red-500/30 text-red-200'
+                   if category == 'error' else 'bg-emerald-500/20 border-emerald-500/30 text-emerald-200' }}">
+      {{ message }}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<main class="{{ 'pt-20' if current_user.is_authenticated else '' }}">
+  {% block content %}{% endblock %}
+</main>
+
+{% if current_user.is_authenticated and current_user.is_guest %}
+<!-- soft, dismissible, bottom-anchored: an offer, never a wall -->
+<div id="guest-banner"
+     class="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3
+            rounded-full border border-accent/30 bg-panel/80 backdrop-blur-2xl
+            pl-5 pr-2 py-2 shadow-2xl max-w-[92vw]">
+  <span class="text-sm text-slate-300 truncate">Browsing as a guest — save your progress?</span>
+  <button onclick="document.getElementById('claim-modal').classList.remove('hidden')"
+          class="text-sm px-3 py-1.5 rounded-full bg-accent text-white whitespace-nowrap">Save account</button>
+  <button onclick="document.getElementById('guest-banner').remove()"
+          class="text-slate-500 hover:text-white px-1.5">&times;</button>
+</div>
+
+<div id="claim-modal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+  <form id="claim-form" class="bg-panel border border-white/10 rounded-2xl p-6 w-full max-w-sm space-y-3">
+    <h3 class="text-lg font-semibold">Save your account</h3>
+    <p class="text-xs text-slate-400">Your conversations, boards, and rating all carry over.</p>
+    <input name="email" type="email" required placeholder="Email"
+           class="w-full px-3 py-2 rounded-lg bg-panel2 border border-white/10 focus:border-accent focus:outline-none">
+    <input name="password" type="password" required minlength="8" placeholder="Password (8+ characters)"
+           class="w-full px-3 py-2 rounded-lg bg-panel2 border border-white/10 focus:border-accent focus:outline-none">
+    <input name="username" type="text" placeholder="Display name (optional)"
+           class="w-full px-3 py-2 rounded-lg bg-panel2 border border-white/10 focus:border-accent focus:outline-none">
+    <p class="text-xs text-red-400 hidden" id="claim-error"></p>
+    <div class="flex gap-2 justify-end pt-1">
+      <button type="button" onclick="document.getElementById('claim-modal').classList.add('hidden')"
+              class="px-3 py-1.5 rounded-lg bg-panel2 text-sm">Cancel</button>
+      <button type="submit" class="px-3 py-1.5 rounded-lg bg-accent text-sm">Create account</button>
+    </div>
+  </form>
+</div>
+{% endif %}
+
+<script>
+  // Every mutating fetch() in this app relies on this: CSRFProtect checks
+  // the X-CSRFToken header for JSON requests (plain form posts instead
+  // carry a hidden csrf_token input). Patching fetch here, ahead of the
+  // page-specific scripts block below (which fully overrides rather than
+  // extends that block), means every page's own script still gets the
+  // header for free.
+  (function () {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    if (!meta) return;
+    const token = meta.content;
+    const originalFetch = window.fetch;
+    window.fetch = function (input, init) {
+      init = init || {};
+      const method = (init.method || 'GET').toUpperCase();
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+        init.headers = Object.assign({}, init.headers, { 'X-CSRFToken': token });
+      }
+      return originalFetch(input, init);
+    };
+  })();
+
+  // Shared KaTeX helper -- every page renders math the same way.
+  window.renderMath = function (el) {
+    if (window.renderMathInElement) {
+      renderMathInElement(el || document.body, {
+        delimiters: [
+          { left: "$$", right: "$$", display: true },
+          { left: "$",  right: "$",  display: false },
+        ],
+        throwOnError: false,
+      });
+    }
+  };
+  window.addEventListener('load', () => window.renderMath(document.body));
+
+  // account dropdown
+  (function () {
+    const btn = document.getElementById('user-menu-btn');
+    const menu = document.getElementById('user-menu');
+    if (!btn || !menu) return;
+    btn.addEventListener('click', (e) => { e.stopPropagation(); menu.classList.toggle('hidden'); });
+    document.addEventListener('click', () => menu.classList.add('hidden'));
+  })();
+
+  document.getElementById('claim-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const res = await fetch("{{ url_for('auth.claim') }}", { method: 'POST', body: new FormData(e.target) });
+    const data = await res.json();
+    if (data.ok) { location.reload(); }
+    else {
+      const err = document.getElementById('claim-error');
+      err.textContent = data.error; err.classList.remove('hidden');
+    }
+  });
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

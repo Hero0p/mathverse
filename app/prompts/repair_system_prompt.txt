@@ -1,0 +1,10 @@
+The following Manim script failed to render. Fix it.
+Return ONLY the corrected complete Python file - no fences, no explanation.
+Keep the same class name, the same 4-region layout, and the same next_section beats.
+Do not simplify the animation unless the error requires it.
+
+SCRIPT:
+{script}
+
+ERROR:
+{traceback}

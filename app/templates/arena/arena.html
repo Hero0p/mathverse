@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+{% block title %}Arena — MathVerse{% endblock %}
+{% block content %}
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+<div class="max-w-3xl mx-auto px-4 py-8">
+
+  {% if not user.placement_done %}
+  <section id="placement-section">
+    <h1 class="text-2xl font-bold mb-2">Placement</h1>
+    <p class="text-slate-400 mb-6">Pick a starting tier. You'll get 5 questions at that tier's level to seed your Elo.</p>
+    <div id="tier-pick" class="grid grid-cols-2 gap-3 mb-6">
+      {% for t in placement_tiers %}
+      <button data-tier="{{ t }}" class="tier-btn card p-4 text-left hover:border-accent/50">
+        <div class="font-semibold">{{ t }}</div>
+      </button>
+      {% endfor %}
+    </div>
+    <div id="placement-quiz" class="hidden space-y-4"></div>
+  </section>
+  {% endif %}
+
+  <section id="lobby-section" class="{{ 'hidden' if not user.placement_done else '' }}">
+    <div class="flex items-center justify-between mb-8">
+      <div>
+        <h1 class="text-2xl font-bold">The Arena</h1>
+        <p class="text-slate-400 text-sm">Elo {{ user.elo }} · {{ user.tier }}{% if user.is_guest %} <span class="text-amber-400">(provisional — guest)</span>{% endif %}</p>
+      </div>
+    </div>
+
+    <div class="grid sm:grid-cols-2 gap-4 mb-6">
+      <button data-format="30" class="format-btn card p-5 text-left hover:border-accent/50">
+        <div class="font-semibold text-accent2">Blitz</div>
+        <div class="text-sm text-slate-400">30 seconds, fast and sharp</div>
+      </button>
+      <button data-format="60" class="format-btn card p-5 text-left hover:border-accent/50">
+        <div class="font-semibold text-accent2">Rapid</div>
+        <div class="text-sm text-slate-400">60 seconds, more room to think</div>
+      </button>
+    </div>
+
+    <label class="flex items-center gap-2 text-sm mb-6">
+      <input type="checkbox" id="ranked-toggle" checked> Ranked (affects Elo)
+    </label>
+
+    <button id="queue-btn" class="btn-primary" disabled>Select a format to queue</button>
+  </section>
+
+  <section id="queue-section" class="hidden text-center py-16">
+    <div class="text-4xl font-mono mb-2" id="queue-timer">0:00</div>
+    <p class="text-slate-400">Searching for an opponent...</p>
+    <button id="bot-offer-btn" class="btn-secondary mt-6 hidden">Play a bot instead</button>
+    <button id="cancel-queue-btn" class="btn-secondary mt-4 block mx-auto">Cancel</button>
+  </section>
+
+  <section id="match-section" class="hidden">
+    <div class="flex items-center justify-between mb-4">
+      <div class="text-sm">You: <span id="my-score" class="font-bold text-accent2">0</span></div>
+      <div id="clock" class="text-3xl font-mono">--</div>
+      <div class="text-sm">Opponent: <span id="opp-score" class="font-bold">0</span></div>
+    </div>
+    <div id="countdown" class="hidden text-center text-6xl font-bold py-24"></div>
+    <div id="question-card" class="card p-6 hidden">
+      <div id="question-statement" class="text-lg mb-4"></div>
+      <div id="choices" class="grid grid-cols-1 gap-2 mb-4"></div>
+      <input id="numeric-answer" type="text" placeholder="Type your answer, press Enter" class="hidden w-full px-3 py-2 rounded bg-panel2 border border-white/10">
+      <button id="skip-btn" class="btn-secondary text-sm mt-2">Skip (S)</button>
+    </div>
+  </section>
+
+  <section id="results-section" class="hidden text-center py-12">
+    <h2 id="results-title" class="text-3xl font-bold mb-4"></h2>
+    <div class="flex justify-center gap-8 mb-4 text-lg">
+      <div>You: <span id="final-my-score" class="font-bold"></span></div>
+      <div>Opponent: <span id="final-opp-score" class="font-bold"></span></div>
+    </div>
+    <div id="elo-delta-display" class="text-2xl font-mono mb-2"></div>
+    <div class="text-slate-400 mb-8" id="new-tier-display"></div>
+    <button id="play-again-btn" class="btn-primary">Play again</button>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const socket = io();
+let selectedTier = null;
+let selectedFormat = null;
+let currentQuestion = null;
+
+// --- Placement ---
+document.querySelectorAll('.tier-btn').forEach(btn => btn.addEventListener('click', async () => {
+  selectedTier = btn.dataset.tier;
+  const res = await fetch('/api/arena/placement', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ action: 'start', tier: selectedTier }),
+  });
+  const json = await res.json();
+  if (!json.ok) { alert(json.error); return; }
+  document.getElementById('tier-pick').classList.add('hidden');
+  renderPlacementQuiz(json.data.questions);
+}));
+
+function renderPlacementQuiz(questions) {
+  const container = document.getElementById('placement-quiz');
+  container.classList.remove('hidden');
+  container.innerHTML = '';
+  const answers = {};
+  questions.forEach((q, i) => {
+    const div = document.createElement('div');
+    div.className = 'card p-4';
+    div.innerHTML = `<div class="mb-2">${i+1}. ${q.statement}</div>` +
+      (q.choices ? q.choices.map((c, ci) => `<label class="block text-sm"><input type="radio" name="q${q.id}" value="${c}"> ${c}</label>`).join('') :
+       `<input type="text" data-qid="${q.id}" class="px-2 py-1 rounded bg-panel2 border border-white/10 text-sm w-full">`);
+    container.appendChild(div);
+  });
+  const submitBtn = document.createElement('button');
+  submitBtn.textContent = 'Submit placement';
+  submitBtn.className = 'btn-primary mt-2';
+  submitBtn.addEventListener('click', async () => {
+    questions.forEach(q => {
+      const radio = container.querySelector(`input[name="q${q.id}"]:checked`);
+      const text = container.querySelector(`input[data-qid="${q.id}"]`);
+      answers[q.id] = radio ? radio.value : (text ? text.value : '');
+    });
+    const res = await fetch('/api/arena/placement', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ action: 'submit', answers }),
+    });
+    const json = await res.json();
+    if (!json.ok) { alert(json.error); return; }
+    location.reload();
+  });
+  container.appendChild(submitBtn);
+}
+
+// --- Lobby / queue ---
+document.querySelectorAll('.format-btn').forEach(btn => btn.addEventListener('click', () => {
+  selectedFormat = parseInt(btn.dataset.format, 10);
+  document.querySelectorAll('.format-btn').forEach(b => b.classList.toggle('border-accent', b === btn));
+  const qbtn = document.getElementById('queue-btn');
+  qbtn.disabled = false;
+  qbtn.textContent = `Queue for ${selectedFormat}s`;
+}));
+
+let queueStart = null;
+let queueTimerHandle = null;
+
+document.getElementById('queue-btn')?.addEventListener('click', () => {
+  if (!selectedFormat) return;
+  const ranked = document.getElementById('ranked-toggle').checked;
+  socket.emit('arena:queue_join', { format: selectedFormat, ranked });
+  showSection('queue-section');
+  queueStart = Date.now();
+  queueTimerHandle = setInterval(() => {
+    const secs = Math.floor((Date.now() - queueStart) / 1000);
+    document.getElementById('queue-timer').textContent = `${Math.floor(secs/60)}:${String(secs%60).padStart(2,'0')}`;
+  }, 500);
+});
+
+document.getElementById('cancel-queue-btn').addEventListener('click', () => {
+  socket.emit('arena:queue_leave');
+  clearInterval(queueTimerHandle);
+  showSection('lobby-section');
+});
+
+document.getElementById('bot-offer-btn').addEventListener('click', () => {
+  socket.emit('arena:accept_bot', { format: selectedFormat });
+});
+
+socket.on('arena:bot_offer', () => document.getElementById('bot-offer-btn').classList.remove('hidden'));
+
+function showSection(id) {
+  ['placement-section','lobby-section','queue-section','match-section','results-section'].forEach(s => {
+    const el = document.getElementById(s);
+    if (el) el.classList.toggle('hidden', s !== id);
+  });
+}
+
+// --- Match ---
+let clockInterval = null;
+let matchEndTime = null;
+
+socket.on('arena:match_found', (data) => {
+  clearInterval(queueTimerHandle);
+  showSection('match-section');
+  document.getElementById('countdown').classList.remove('hidden');
+  document.getElementById('question-card').classList.add('hidden');
+  document.getElementById('my-score').textContent = '0';
+  document.getElementById('opp-score').textContent = '0';
+  selectedFormat = data.format;
+});
+
+socket.on('arena:countdown', (data) => {
+  document.getElementById('countdown').textContent = data.count;
+  if (data.count === 1) {
+    matchEndTime = Date.now() + (selectedFormat * 1000) + 1000; // +1s to match server's final countdown tick
+    clearInterval(clockInterval);
+    clockInterval = setInterval(updateClock, 200);
+  }
+});
+
+function updateClock() {
+  const remaining = Math.max(0, Math.round((matchEndTime - Date.now()) / 1000));
+  document.getElementById('clock').textContent = `${Math.floor(remaining/60)}:${String(remaining%60).padStart(2,'0')}`;
+  if (remaining <= 0) clearInterval(clockInterval);
+}
+
+socket.on('arena:question', (data) => {
+  currentQuestion = data;
+  document.getElementById('countdown').classList.add('hidden');
+  const card = document.getElementById('question-card');
+  card.classList.remove('hidden');
+  document.getElementById('question-statement').innerHTML = data.statement_latex || data.statement;
+  const choicesEl = document.getElementById('choices');
+  const numericEl = document.getElementById('numeric-answer');
+  choicesEl.innerHTML = '';
+  if (data.choices) {
+    numericEl.classList.add('hidden');
+    data.choices.forEach((choice, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'btn-secondary text-left';
+      btn.textContent = `${i+1}. ${choice}`;
+      btn.addEventListener('click', () => submitAnswer(choice));
+      choicesEl.appendChild(btn);
+    });
+  } else {
+    numericEl.classList.remove('hidden');
+    numericEl.value = '';
+    numericEl.focus();
+  }
+  if (window.renderMathInElement) renderMathInElement(card, { delimiters: [{left:"$$",right:"$$",display:true},{left:"$",right:"$",display:false}] });
+});
+
+function submitAnswer(answer) {
+  if (!currentQuestion) return;
+  socket.emit('arena:answer', { question_id: currentQuestion.id, answer });
+  currentQuestion = null;
+}
+
+document.getElementById('numeric-answer').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') submitAnswer(e.target.value);
+});
+document.getElementById('skip-btn').addEventListener('click', () => {
+  if (!currentQuestion) return;
+  socket.emit('arena:skip', { question_id: currentQuestion.id });
+  currentQuestion = null;
+});
+document.addEventListener('keydown', (e) => {
+  if (document.getElementById('match-section').classList.contains('hidden')) return;
+  if (e.key.toLowerCase() === 's') { document.getElementById('skip-btn').click(); return; }
+  if (!currentQuestion || !currentQuestion.choices) return;
+  const n = parseInt(e.key, 10);
+  if (n >= 1 && n <= currentQuestion.choices.length) submitAnswer(currentQuestion.choices[n-1]);
+});
+
+socket.on('arena:score_update', (data) => {
+  document.getElementById('my-score').textContent = data.score_a;
+  document.getElementById('opp-score').textContent = data.score_b;
+});
+
+socket.on('arena:match_end', (data) => {
+  showSection('results-section');
+  document.getElementById('final-my-score').textContent = data.scores.you;
+  document.getElementById('final-opp-score').textContent = data.scores.opponent;
+  const title = data.winner === 'you' ? 'Victory!' : data.winner === 'draw' ? 'Draw' : 'Defeat';
+  document.getElementById('results-title').textContent = title;
+  const deltaEl = document.getElementById('elo-delta-display');
+  if (data.elo_delta !== null && data.elo_delta !== undefined) {
+    deltaEl.textContent = `${data.elo_delta >= 0 ? '+' : ''}${data.elo_delta} Elo → ${data.new_elo}`;
+    deltaEl.className = 'text-2xl font-mono mb-2 ' + (data.elo_delta >= 0 ? 'text-good' : 'text-bad');
+    document.getElementById('new-tier-display').textContent = data.new_tier;
+  }
+});
+
+document.getElementById('play-again-btn').addEventListener('click', () => showSection('lobby-section'));
+</script>
+{% endblock %}

@@ -1,0 +1,272 @@
+{% extends "base.html" %}
+{% block title %}{{ board.title }} — MathVerse{% endblock %}
+{% block content %}
+<script src="https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<div class="flex" style="height: calc(100vh - 5rem);">
+  <div class="flex-1 flex flex-col overflow-hidden">
+    <div class="flex items-center gap-2 px-3 py-2 border-b border-white/10 flex-wrap">
+      <input id="board-title" value="{{ board.title }}" class="bg-transparent font-semibold px-2 py-1 rounded hover:bg-white/5 focus:bg-white/10 focus:outline-none w-48">
+      <div class="w-px h-6 bg-white/10 mx-1"></div>
+      <button data-tool="select" class="tool-btn btn-secondary text-sm">Select</button>
+      <button data-tool="pen" class="tool-btn btn-secondary text-sm">Pen</button>
+      <button data-tool="eraser" class="tool-btn btn-secondary text-sm">Eraser</button>
+      <button data-tool="rect" class="tool-btn btn-secondary text-sm">Rectangle</button>
+      <button data-tool="line" class="tool-btn btn-secondary text-sm">Line</button>
+      <button data-tool="text" class="tool-btn btn-secondary text-sm">Text</button>
+      <input type="color" id="color-picker" value="#e2e8f0" class="w-8 h-8 rounded bg-transparent">
+      <div class="w-px h-6 bg-white/10 mx-1"></div>
+      <button id="undo-btn" class="btn-secondary text-sm">Undo</button>
+      <button id="redo-btn" class="btn-secondary text-sm">Redo</button>
+      <button id="zoom-in-btn" class="btn-secondary text-sm">Zoom +</button>
+      <button id="zoom-out-btn" class="btn-secondary text-sm">Zoom -</button>
+      <div class="w-px h-6 bg-white/10 mx-1"></div>
+      <button id="export-png-btn" class="btn-secondary text-sm">Export PNG</button>
+      <button id="export-pdf-btn" class="btn-secondary text-sm">Export PDF</button>
+      <span id="save-status" class="text-xs text-slate-500 ml-auto">Saved</span>
+    </div>
+    <div class="flex-1 overflow-hidden bg-[#0e1420]">
+      <canvas id="board-canvas"></canvas>
+    </div>
+  </div>
+
+  <aside class="w-80 border-l border-white/10 flex flex-col p-3 gap-3 overflow-y-auto">
+    <h3 class="font-semibold text-accent2">AI Assistant</h3>
+    <div class="grid grid-cols-2 gap-2 text-xs">
+      <button data-mode="ask" class="ai-mode-btn btn-secondary">Ask</button>
+      <button data-mode="explain_selection" class="ai-mode-btn btn-secondary">Explain selection</button>
+      <button data-mode="check_work" class="ai-mode-btn btn-secondary">Check my work</button>
+      <button data-mode="solve_on_board" class="ai-mode-btn btn-secondary">Solve on board</button>
+    </div>
+    <textarea id="ai-question" rows="2" placeholder="Optional question..." class="w-full text-sm px-2 py-1.5 rounded bg-panel2 border border-white/10"></textarea>
+    <button id="ai-submit-btn" class="btn-primary text-sm">Send to AI</button>
+    <div id="ai-response" class="card p-3 text-sm whitespace-pre-wrap hidden"></div>
+    <button id="make-video-btn" class="btn-secondary text-sm hidden">Make a video of this</button>
+  </aside>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const BOARD_ID = {{ board.id }};
+const canvasEl = document.getElementById('board-canvas');
+const container = canvasEl.parentElement;
+const canvas = new fabric.Canvas('board-canvas', { backgroundColor: '#0e1420', isDrawingMode: false });
+
+function resizeCanvas() {
+  canvas.setWidth(container.clientWidth);
+  canvas.setHeight(container.clientHeight);
+  canvas.renderAll();
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+canvas.freeDrawingBrush.width = 3;
+canvas.freeDrawingBrush.color = '#e2e8f0';
+
+let currentTool = 'select';
+let lastAiResult = null;
+
+function setTool(tool) {
+  currentTool = tool;
+  canvas.isDrawingMode = (tool === 'pen' || tool === 'eraser');
+  if (tool === 'pen') {
+    canvas.freeDrawingBrush.color = document.getElementById('color-picker').value;
+    canvas.freeDrawingBrush.width = 3;
+  } else if (tool === 'eraser') {
+    canvas.freeDrawingBrush.color = '#0e1420';
+    canvas.freeDrawingBrush.width = 18;
+  }
+  document.querySelectorAll('.tool-btn').forEach(b => b.classList.toggle('bg-accent', b.dataset.tool === tool));
+}
+document.querySelectorAll('.tool-btn').forEach(btn => btn.addEventListener('click', () => setTool(btn.dataset.tool)));
+setTool('select');
+
+canvas.on('mouse:down', (opt) => {
+  if (currentTool === 'rect') {
+    const p = opt.pointer;
+    const rect = new fabric.Rect({
+      left: p.x, top: p.y, width: 1, height: 1, fill: 'transparent',
+      stroke: document.getElementById('color-picker').value, strokeWidth: 2,
+    });
+    canvas.add(rect);
+    canvas.setActiveObject(rect);
+    let isDown = true;
+    const onMove = (mo) => {
+      if (!isDown) return;
+      const mp = mo.pointer;
+      rect.set({ width: Math.abs(mp.x - p.x), height: Math.abs(mp.y - p.y), left: Math.min(mp.x, p.x), top: Math.min(mp.y, p.y) });
+      canvas.renderAll();
+    };
+    const onUp = () => { isDown = false; canvas.off('mouse:move', onMove); canvas.off('mouse:up', onUp); pushHistory(); setTool('select'); };
+    canvas.on('mouse:move', onMove);
+    canvas.on('mouse:up', onUp);
+  } else if (currentTool === 'line') {
+    const p = opt.pointer;
+    const line = new fabric.Line([p.x, p.y, p.x, p.y], { stroke: document.getElementById('color-picker').value, strokeWidth: 2 });
+    canvas.add(line);
+    let isDown = true;
+    const onMove = (mo) => { if (!isDown) return; line.set({ x2: mo.pointer.x, y2: mo.pointer.y }); canvas.renderAll(); };
+    const onUp = () => { isDown = false; canvas.off('mouse:move', onMove); canvas.off('mouse:up', onUp); pushHistory(); setTool('select'); };
+    canvas.on('mouse:move', onMove);
+    canvas.on('mouse:up', onUp);
+  } else if (currentTool === 'text') {
+    const p = opt.pointer;
+    const text = new fabric.IText('Type here', { left: p.x, top: p.y, fill: document.getElementById('color-picker').value, fontSize: 20 });
+    canvas.add(text);
+    canvas.setActiveObject(text);
+    text.enterEditing();
+    setTool('select');
+    pushHistory();
+  }
+});
+
+// --- pan & zoom ---
+canvas.on('mouse:wheel', (opt) => {
+  const delta = opt.e.deltaY;
+  let zoom = canvas.getZoom() * (0.999 ** delta);
+  zoom = Math.min(Math.max(zoom, 0.2), 5);
+  canvas.zoomToPoint({ x: opt.e.offsetX, y: opt.e.offsetY }, zoom);
+  opt.e.preventDefault(); opt.e.stopPropagation();
+});
+document.getElementById('zoom-in-btn').addEventListener('click', () => canvas.setZoom(Math.min(canvas.getZoom() * 1.2, 5)));
+document.getElementById('zoom-out-btn').addEventListener('click', () => canvas.setZoom(Math.max(canvas.getZoom() / 1.2, 0.2)));
+
+let isPanning = false, lastPos = null;
+canvas.on('mouse:down', (opt) => { if (opt.e.button === 1 || opt.e.spaceKey) { isPanning = true; lastPos = { x: opt.e.clientX, y: opt.e.clientY }; } });
+canvas.on('mouse:move', (opt) => {
+  if (!isPanning) return;
+  const vpt = canvas.viewportTransform;
+  vpt[4] += opt.e.clientX - lastPos.x;
+  vpt[5] += opt.e.clientY - lastPos.y;
+  lastPos = { x: opt.e.clientX, y: opt.e.clientY };
+  canvas.requestRenderAll();
+});
+canvas.on('mouse:up', () => { isPanning = false; });
+
+// --- undo/redo ---
+let history = [];
+let historyIndex = -1;
+let suppressHistory = false;
+
+function pushHistory() {
+  if (suppressHistory) return;
+  history = history.slice(0, historyIndex + 1);
+  history.push(JSON.stringify(canvas.toJSON()));
+  historyIndex = history.length - 1;
+  scheduleAutosave();
+}
+canvas.on('object:added', pushHistory);
+canvas.on('object:modified', pushHistory);
+canvas.on('object:removed', pushHistory);
+pushHistory();
+
+function loadHistoryState(json) {
+  suppressHistory = true;
+  canvas.loadFromJSON(json, () => { canvas.renderAll(); suppressHistory = false; });
+}
+document.getElementById('undo-btn').addEventListener('click', () => {
+  if (historyIndex <= 0) return;
+  historyIndex -= 1;
+  loadHistoryState(history[historyIndex]);
+});
+document.getElementById('redo-btn').addEventListener('click', () => {
+  if (historyIndex >= history.length - 1) return;
+  historyIndex += 1;
+  loadHistoryState(history[historyIndex]);
+});
+
+// --- autosave ---
+let saveTimer = null;
+function scheduleAutosave() {
+  document.getElementById('save-status').textContent = 'Saving...';
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveBoard, 10000);
+}
+async function saveBoard() {
+  await fetch(`/api/boards/${BOARD_ID}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ canvas_json: JSON.stringify(canvas.toJSON()), title: document.getElementById('board-title').value }),
+  });
+  document.getElementById('save-status').textContent = 'Saved';
+}
+window.addEventListener('blur', saveBoard);
+document.getElementById('board-title').addEventListener('change', saveBoard);
+
+// --- load existing board ---
+(async () => {
+  const res = await fetch(`/api/boards/${BOARD_ID}`);
+  const { data } = await res.json();
+  if (data.canvas_json && data.canvas_json !== '{}') {
+    loadHistoryState(JSON.parse(data.canvas_json));
+  }
+})();
+
+// --- AI panel ---
+let selectedMode = 'ask';
+document.querySelectorAll('.ai-mode-btn').forEach(btn => btn.addEventListener('click', () => {
+  selectedMode = btn.dataset.mode;
+  document.querySelectorAll('.ai-mode-btn').forEach(b => b.classList.toggle('bg-accent', b === btn));
+}));
+document.querySelector('.ai-mode-btn[data-mode="ask"]').classList.add('bg-accent');
+
+document.getElementById('ai-submit-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('ai-submit-btn');
+  btn.disabled = true; btn.textContent = 'Thinking...';
+  const dataUrl = canvas.toDataURL({ format: 'png' });
+  const question = document.getElementById('ai-question').value;
+  try {
+    const res = await fetch(`/api/boards/${BOARD_ID}/ask`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: selectedMode, image_png_base64: dataUrl, question }),
+    });
+    const json = await res.json();
+    const respEl = document.getElementById('ai-response');
+    respEl.classList.remove('hidden');
+    if (!json.ok) { respEl.textContent = json.error; return; }
+
+    if (json.data.mode === 'solve_on_board') {
+      let y = 40;
+      json.data.steps.forEach((step) => {
+        canvas.add(new fabric.IText(step, { left: 40, top: y, fill: '#e2e8f0', fontSize: 18 }));
+        y += 40;
+      });
+      canvas.renderAll();
+      respEl.textContent = 'Steps added to the board.';
+    } else {
+      respEl.textContent = json.data.text;
+      lastAiResult = { question: question || '(from whiteboard)', text: json.data.text };
+      document.getElementById('make-video-btn').classList.remove('hidden');
+      if (window.renderMathInElement) renderMathInElement(respEl, { delimiters: [{left:"$$",right:"$$",display:true},{left:"$",right:"$",display:false}] });
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = 'Send to AI';
+  }
+});
+
+document.getElementById('make-video-btn').addEventListener('click', async () => {
+  if (!lastAiResult) return;
+  const convRes = await fetch('/api/conversations', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ title: lastAiResult.question.slice(0, 60) }) });
+  const conv = (await convRes.json()).data;
+  await fetch(`/api/conversations/${conv.id}/message`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ content: lastAiResult.question }),
+  });
+  location.href = `/chat?c=${conv.id}`;
+});
+
+document.getElementById('export-png-btn').addEventListener('click', () => {
+  const link = document.createElement('a');
+  link.download = `${document.getElementById('board-title').value || 'board'}.png`;
+  link.href = canvas.toDataURL({ format: 'png' });
+  link.click();
+});
+document.getElementById('export-pdf-btn').addEventListener('click', () => {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'landscape' });
+  const dataUrl = canvas.toDataURL({ format: 'png' });
+  doc.addImage(dataUrl, 'PNG', 10, 10, 277, 190);
+  doc.save(`${document.getElementById('board-title').value || 'board'}.pdf`);
+});
+</script>
+{% endblock %}

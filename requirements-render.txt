@@ -1,0 +1,11 @@
+# Only needed for MANIM_EXECUTION_MODE=local (rendering without the Docker
+# sandbox). The web app and Celery worker do NOT need these in the default
+# "docker" mode -- rendering happens inside sandbox/Dockerfile.manim there.
+#
+# Also requires, outside pip: ffmpeg on PATH, and a TeX distribution
+# (TeX Live or MiKTeX) providing `latex` and `dvisvgm`.
+-r requirements.txt
+
+manim>=0.19
+numpy>=1.26
+Pillow>=10.0

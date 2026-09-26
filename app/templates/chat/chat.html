@@ -1,0 +1,321 @@
+{% extends "base.html" %}
+{% block title %}Ask — MathVerse{% endblock %}
+{% block content %}
+<div class="flex flex-col" style="height: calc(100vh - 5rem);">
+
+  <!-- conversation drawer toggle -->
+  <button id="drawer-btn"
+          class="fixed top-[4.6rem] left-6 z-30 text-xs text-slate-500 hover:text-white transition">
+    ☰ History
+  </button>
+
+  <aside id="drawer"
+         class="fixed inset-y-0 left-0 z-[55] w-72 -translate-x-full transition-transform duration-200
+                border-r border-white/10 bg-panel/95 backdrop-blur-2xl p-4 flex flex-col gap-3">
+    <div class="flex items-center justify-between">
+      <h2 class="font-semibold text-sm">Conversations</h2>
+      <button id="drawer-close" class="text-slate-500 hover:text-white">&times;</button>
+    </div>
+    <button id="new-conv-btn" class="text-sm px-3 py-2 rounded-lg bg-accent text-white">+ New conversation</button>
+    <div id="conv-list" class="space-y-1 overflow-y-auto flex-1 text-sm"></div>
+  </aside>
+  <div id="drawer-scrim" class="hidden fixed inset-0 bg-black/50 z-[54]"></div>
+
+  <!-- message thread -->
+  <div id="thread" class="flex-1 overflow-y-auto">
+    <div class="max-w-3xl mx-auto px-4 py-6 space-y-6">
+      <div id="empty-state" class="text-center py-24">
+        <h1 class="text-3xl font-bold tracking-tight">What are we working on?</h1>
+        <p class="text-slate-500 mt-2 text-sm">Ask a question or name a concept — you'll get an answer instantly.</p>
+        <div class="flex flex-wrap gap-2 justify-center mt-6">
+          {% for s in ['Explain the midpoint theorem', 'Solve x² − 5x + 6 = 0', 'Why is the derivative of xⁿ equal to nxⁿ⁻¹?'] %}
+          <button class="suggestion text-xs px-3 py-1.5 rounded-full border border-white/10 bg-panel/60 text-slate-400 hover:text-white hover:border-accent/40 transition">{{ s }}</button>
+          {% endfor %}
+        </div>
+      </div>
+      <div id="messages" class="space-y-6"></div>
+    </div>
+  </div>
+
+  <!-- composer -->
+  <div class="px-4 pb-6">
+    <form id="prompt-form" class="max-w-3xl mx-auto flex gap-2 items-end
+                                  rounded-2xl border border-white/10 bg-panel/70 backdrop-blur-2xl p-2
+                                  focus-within:border-accent/50 transition">
+      <textarea id="prompt-input" rows="1" required placeholder="Ask any math question or concept..."
+                class="flex-1 bg-transparent px-3 py-2.5 resize-none focus:outline-none placeholder:text-slate-600 max-h-40"></textarea>
+      <button type="submit" id="send-btn"
+              class="px-5 py-2.5 rounded-xl bg-accent text-white font-medium disabled:opacity-40 transition">Send</button>
+    </form>
+  </div>
+</div>
+
+<template id="tpl-user">
+  <div class="flex justify-end">
+    <div class="max-w-[85%] bg-accent/20 border border-accent/25 rounded-2xl rounded-br-md px-4 py-2.5 text-sm"></div>
+  </div>
+</template>
+
+<template id="tpl-assistant">
+  <div class="space-y-3">
+    <div class="answer text-[15px] leading-relaxed text-slate-200 whitespace-pre-wrap"></div>
+
+    <!-- video is a deliberate, separate step -->
+    <div class="video-zone border-t border-white/10 pt-3">
+      <button class="gen-video-btn group flex items-center gap-2 text-sm px-4 py-2 rounded-full
+                     border border-white/10 bg-panel/60 text-slate-300
+                     hover:text-white hover:border-accent/50 transition">
+        <span class="text-accent2 group-hover:scale-110 transition">▶</span>
+        Generate video explanation
+      </button>
+
+      <div class="progress-card hidden rounded-xl border border-white/10 bg-panel/60 p-4">
+        <div class="stage-label text-accent2 text-xs font-semibold mb-2">Queued</div>
+        <div class="w-full bg-panel2 rounded-full h-1 overflow-hidden">
+          <div class="progress-bar bg-accent h-1 rounded-full transition-all duration-500" style="width:0%"></div>
+        </div>
+        <p class="worker-hint hidden text-[11px] text-amber-400/80 mt-2"></p>
+      </div>
+
+      <div class="video-wrap hidden">
+        <video controls class="w-full rounded-xl border border-white/10"></video>
+        <a class="download-link text-xs text-accent2 inline-block mt-2 hover:underline" download>Download video</a>
+      </div>
+
+      <p class="video-error hidden text-xs text-red-400 mt-2"></p>
+    </div>
+  </div>
+</template>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const messagesEl   = document.getElementById('messages');
+const convListEl   = document.getElementById('conv-list');
+const emptyState   = document.getElementById('empty-state');
+const input        = document.getElementById('prompt-input');
+const sendBtn      = document.getElementById('send-btn');
+
+let currentConversationId = new URLSearchParams(location.search).get('c');
+
+const api = (url, opts = {}) =>
+  fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts }).then(r => r.json());
+
+/* ---------- drawer ---------- */
+const drawer = document.getElementById('drawer');
+const scrim  = document.getElementById('drawer-scrim');
+const openDrawer  = () => { drawer.classList.remove('-translate-x-full'); scrim.classList.remove('hidden'); };
+const closeDrawer = () => { drawer.classList.add('-translate-x-full');    scrim.classList.add('hidden'); };
+document.getElementById('drawer-btn').addEventListener('click', openDrawer);
+document.getElementById('drawer-close').addEventListener('click', closeDrawer);
+scrim.addEventListener('click', closeDrawer);
+
+/* ---------- composer ---------- */
+input.addEventListener('input', () => {
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+});
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('prompt-form').requestSubmit(); }
+});
+document.querySelectorAll('.suggestion').forEach(b =>
+  b.addEventListener('click', () => { input.value = b.textContent.trim(); input.focus(); }));
+
+/* ---------- rendering ---------- */
+// The model still reaches for **bold** occasionally. Escape first (so this
+// stays XSS-safe even though the text is model-authored), then allow just
+// bold and bullets through. Escaped < and > decode back to real characters
+// in the DOM text node, so KaTeX still sees correct source afterwards.
+function formatAnswer(text) {
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong class="text-white font-semibold">$1</strong>')
+    .replace(/^[ \t]*[-*][ \t]+/gm, '• ');
+}
+
+function addUser(text) {
+  emptyState.style.display = 'none';
+  const node = document.getElementById('tpl-user').content.cloneNode(true);
+  node.querySelector('div > div').textContent = text;
+  messagesEl.appendChild(node);
+  scrollToEnd();
+}
+
+function addAssistant(message) {
+  emptyState.style.display = 'none';
+  const wrapper = document.createElement('div');
+  wrapper.appendChild(document.getElementById('tpl-assistant').content.cloneNode(true));
+  messagesEl.appendChild(wrapper);
+
+  const answerEl = wrapper.querySelector('.answer');
+  answerEl.innerHTML = formatAnswer(message.content);
+  window.renderMath(answerEl);
+
+  wrapper.querySelector('.gen-video-btn')
+         .addEventListener('click', () => startVideo(message.id, wrapper));
+
+  if (message.video_job_id) trackVideo(message.video_job_id, wrapper);
+  scrollToEnd();
+  return wrapper;
+}
+
+function addThinking() {
+  emptyState.style.display = 'none';
+  const el = document.createElement('div');
+  el.className = 'thinking flex items-center gap-2 text-sm text-slate-500';
+  el.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-accent animate-pulse"></span>Thinking...`;
+  messagesEl.appendChild(el);
+  scrollToEnd();
+  return el;
+}
+
+const scrollToEnd = () => {
+  const t = document.getElementById('thread');
+  t.scrollTop = t.scrollHeight;
+};
+
+/* ---------- video (opt-in, separate from the text answer) ---------- */
+async function startVideo(messageId, wrapper) {
+  const btn      = wrapper.querySelector('.gen-video-btn');
+  const errorEl  = wrapper.querySelector('.video-error');
+  btn.disabled = true;
+  btn.classList.add('hidden');
+  errorEl.classList.add('hidden');
+
+  const res = await api(`/api/messages/${messageId}/video`, { method: 'POST' });
+  if (!res.ok) {
+    errorEl.textContent = res.error;
+    errorEl.classList.remove('hidden');
+    btn.classList.remove('hidden');
+    btn.disabled = false;
+    return;
+  }
+  trackVideo(res.data.job_id, wrapper);
+}
+
+function trackVideo(jobId, wrapper) {
+  const btn        = wrapper.querySelector('.gen-video-btn');
+  const card       = wrapper.querySelector('.progress-card');
+  const stage      = wrapper.querySelector('.stage-label');
+  const bar        = wrapper.querySelector('.progress-bar');
+  const hint       = wrapper.querySelector('.worker-hint');
+  const videoWrap  = wrapper.querySelector('.video-wrap');
+  const video      = wrapper.querySelector('video');
+  const dl         = wrapper.querySelector('.download-link');
+  const errorEl    = wrapper.querySelector('.video-error');
+
+  btn.classList.add('hidden');
+  card.classList.remove('hidden');
+
+  // Renders run one at a time, so a long "Queued" usually just means another
+  // video is ahead of this one. Say so rather than spinning silently.
+  const stuckTimer = setTimeout(() => {
+    if (stage.textContent === 'Queued') {
+      hint.textContent = 'Still queued — another render may be running ahead of this one.';
+      hint.classList.remove('hidden');
+    }
+  }, 20000);
+
+  const es = new EventSource(`/api/video/${jobId}/stream`);
+  es.onmessage = (ev) => {
+    const d = JSON.parse(ev.data);
+    stage.textContent = d.stage;
+    bar.style.width = `${d.progress}%`;
+    if (d.status !== 'queued') { clearTimeout(stuckTimer); hint.classList.add('hidden'); }
+
+    if (d.status === 'done') {
+      es.close(); clearTimeout(stuckTimer);
+      card.classList.add('hidden');
+      videoWrap.classList.remove('hidden');
+      video.src = d.video_url;
+      dl.href = d.video_url;
+    } else if (d.status === 'failed') {
+      es.close(); clearTimeout(stuckTimer);
+      card.classList.add('hidden');
+      errorEl.textContent = "Couldn't render the video — the text answer above still stands.";
+      errorEl.classList.remove('hidden');
+    }
+  };
+  es.onerror = () => { es.close(); clearTimeout(stuckTimer); };
+}
+
+/* ---------- conversations ---------- */
+async function loadConversations() {
+  const { data } = await api('/api/conversations');
+  convListEl.innerHTML = '';
+  data.forEach(c => {
+    const a = document.createElement('a');
+    a.href = `?c=${c.id}`;
+    a.className = 'block px-2 py-2 rounded-lg hover:bg-white/5 truncate' +
+                  (String(c.id) === currentConversationId ? ' bg-white/10 text-white' : ' text-slate-400');
+    a.textContent = c.title;
+    convListEl.appendChild(a);
+  });
+}
+
+async function ensureConversation() {
+  if (currentConversationId) return currentConversationId;
+  const { data } = await api('/api/conversations', { method: 'POST', body: JSON.stringify({}) });
+  currentConversationId = data.id;
+  history.replaceState(null, '', `?c=${currentConversationId}`);
+  return currentConversationId;
+}
+
+async function loadMessages() {
+  if (!currentConversationId) return;
+  const { data } = await api(`/api/conversations/${currentConversationId}/messages`);
+  if (!data.length) return;
+  messagesEl.innerHTML = '';
+  data.forEach(m => m.role === 'user' ? addUser(m.content) : addAssistant(m));
+}
+
+document.getElementById('new-conv-btn').addEventListener('click', async () => {
+  const { data } = await api('/api/conversations', { method: 'POST', body: JSON.stringify({}) });
+  location.href = `?c=${data.id}`;
+});
+
+/* ---------- submit ---------- */
+document.getElementById('prompt-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+  sendBtn.disabled = true;
+
+  const convId = await ensureConversation();
+  addUser(text);
+  const thinking = addThinking();
+
+  try {
+    const res = await api(`/api/conversations/${convId}/message`, {
+      method: 'POST', body: JSON.stringify({ content: text }),
+    });
+    thinking.remove();
+
+    if (!res.ok) {
+      const err = document.createElement('p');
+      err.className = 'text-sm text-red-400';
+      err.textContent = res.error;
+      messagesEl.appendChild(err);
+    } else {
+      addAssistant(res.data.message);
+      loadConversations();
+    }
+  } catch (err) {
+    thinking.remove();
+    const el = document.createElement('p');
+    el.className = 'text-sm text-red-400';
+    el.textContent = 'Network error — please try again.';
+    messagesEl.appendChild(el);
+  } finally {
+    sendBtn.disabled = false;
+    input.focus();
+  }
+});
+
+loadConversations();
+loadMessages();
+</script>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — MathVerse{% endblock %}
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 py-8">
+  <h1 class="text-2xl font-bold mb-6">Welcome back, {{ current_user.display_name }}</h1>
+
+  <div class="grid sm:grid-cols-3 gap-4 mb-10">
+    <a href="{{ url_for('chat.chat_page') }}" class="card p-5 hover:border-accent/50 transition">
+      <h3 class="font-semibold text-accent2">Ask a question</h3>
+      <p class="text-sm text-slate-400 mt-1">Get a narrated video solution.</p>
+    </a>
+    <a href="{{ url_for('whiteboard.whiteboard_page') }}" class="card p-5 hover:border-accent/50 transition">
+      <h3 class="font-semibold text-accent2">Open the whiteboard</h3>
+      <p class="text-sm text-slate-400 mt-1">Draw, get AI feedback, check your work.</p>
+    </a>
+    <a href="{{ url_for('arena.arena_page') }}" class="card p-5 hover:border-accent/50 transition">
+      <h3 class="font-semibold text-accent2">Enter the Arena</h3>
+      <p class="text-sm text-slate-400 mt-1">
+        {% if current_user.placement_done %}Elo {{ current_user.elo }} · {{ current_user.tier }}{% else %}Take your placement quiz{% endif %}
+      </p>
+    </a>
+  </div>
+
+  <div class="grid sm:grid-cols-2 gap-8">
+    <div>
+      <h2 class="font-semibold mb-3">Recent conversations</h2>
+      <div class="space-y-2">
+        {% for c in conversations %}
+        <a href="{{ url_for('chat.chat_page') }}?c={{ c.id }}" class="card p-3 block hover:border-accent/50">{{ c.title }}</a>
+        {% else %}
+        <p class="text-sm text-slate-500">No conversations yet.</p>
+        {% endfor %}
+      </div>
+    </div>
+    <div>
+      <h2 class="font-semibold mb-3">Recent boards</h2>
+      <div class="space-y-2">
+        {% for b in boards %}
+        <a href="{{ url_for('whiteboard.whiteboard_editor', board_id=b.id) }}" class="card p-3 block hover:border-accent/50">{{ b.title }}</a>
+        {% else %}
+        <p class="text-sm text-slate-500">No boards yet.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
