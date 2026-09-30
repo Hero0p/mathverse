@@ -115,17 +115,6 @@ This is a deliberate trade-off to remove the Docker dependency for single-user l
 containerized rendering: no network, read-only root filesystem, non-root user, and
 memory/cpu/pid limits.
 
-## Tests
-
-```bash
-pytest
-```
-
-152 tests covering Elo math (tier boundaries, draws, the provisional multiplier, the floor
-shield), answer normalization, Arena scoring and match finalization, the guest→account
-upgrade preserving data, the two-step chat flow, retry/circuit-breaker classification, the
-in-process store, and the AST validator rejecting malicious scripts before Manim is invoked.
-
 ## Question ingestion
 
 `scripts/ingest_questions.py` takes a MATH/QSA-style directory of JSON files or a single
